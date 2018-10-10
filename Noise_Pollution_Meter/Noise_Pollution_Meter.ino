@@ -59,14 +59,20 @@ const int SerialDebugMode = 1; // 1 = Print all samples on Serial Monitor, 0 = P
 
 // --------- END OF CONFIGURABLE FIRMWARE PARAMETERS SECTION ---------
 
-// ESP8266 board libraries.
+// ESP8266/ESP32 board libraries.
+#ifdef ESP8266
 #include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>
+#elif defined(ESP32)
+#include <WiFi.h>
+#else
+#error Only ESP8266 and ESP32 type Boards supported
+#endif
+
 
 // We use ThingsBoard IoT Platform MQTT transport to report measurements in this example. 
 // Set your ThingsBoard instance credentials on the noisepm/noisepm_creds.h file
 // Train yourself at https://thingsboard.io | https://thingsboard.io/docs/samples/esp8266/temperature/
-#include <MQTT.h>
+#include <PubSubClient.h>
 
 // Custom library to define all private credentials. Please replace with yours in that file.
 #include <noisepm_creds.h>
@@ -94,32 +100,11 @@ int valeur ;
 int sensor = A0;
 
 // The WiFi Client.
-WiFiClientSecure wifiClient;
+WiFiClient espClient;
 
 // The ThingsBoard MQTT Pub/Sub client
-MQTTClient client;
+PubSubClient client(THINGSBOARD_SERVER, 1883, espClient);
 
-void setup() {
-  Serial.begin(SerialBaud);
-
-  Serial.print("Connecting to WiFi: ");
-  Serial.println(WIFI_SSID);
-  InitWifi();
-
-  client.begin(THINGSBOARD_SERVER, wifiClient);
-  Serial.print("Connecting to ThingsBoard: ");
-  Serial.println(THINGSBOARD_SERVER);
-  Serial.println(THINGSBOARD_CLIENTID);
-  Serial.println(THINGSBOARD_TOKEN);
-  if ( !client.connected() ) {
-    ConnectToThingsBoard();
-  }
-}
-
-void loop() {
-  Sampling(SamplesDelay, Samples, SleepTime, SerialDebugMode);
-  client.loop();  
-}
 
 void InitWifi() {
   WiFi.persistent(false);
@@ -188,6 +173,36 @@ void ConnectToThingsBoard() {
   }
 }
 
+void report(double maxi, double minim , double avg)
+{
+  // Prepare a JSON payload string
+  String payload = "{";
+  payload += "\"maxi\":"; payload += maxi; payload += ",";
+  payload += "\"minim\":"; payload += minim; payload += ",";
+  payload += "\"avg\":"; payload += avg;
+  payload += "}";
+
+  // Send payload
+  char attributes[100];
+  payload.toCharArray( attributes, 100 );
+  client.publish( "v1/devices/me/telemetry", attributes );
+  Serial.println("Reported!");
+}
+
+void UpdateMax (float Value) {
+  MaxValue = 0;
+  for (int i = 4; i > 0; i--) {
+    window[i] = window[i - 1];
+  }
+  window[0] = Value;
+
+  for (int a = 0; a < 5; a ++) {
+    if (window[a] > MaxValue) {
+      MaxValue = window[a];
+    }
+  }
+}
+
 void Sampling(int Sample_D, int n_Sample, int Sleep_t, int Mode) {
   Allvalue = 0;
   maximum = 0;
@@ -244,32 +259,26 @@ void Sampling(int Sample_D, int n_Sample, int Sleep_t, int Mode) {
   ESP.deepSleep(Sleep_t); // going to sleep
 }
 
-void report(double maxi, double minim , double avg)
-{
-  // Prepare a JSON payload string
-  String payload = "{";
-  payload += "\"maxi\":"; payload += maxi; payload += ",";
-  payload += "\"minim\":"; payload += minim; payload += ",";
-  payload += "\"avg\":"; payload += avg;
-  payload += "}";
 
-  // Send payload
-  char attributes[100];
-  payload.toCharArray( attributes, 100 );
-  client.publish( "v1/devices/me/telemetry", attributes );
-  Serial.println("Reported!");
+
+void setup() {
+  Serial.begin(SerialBaud);
+
+  Serial.print("Connecting to WiFi: ");
+  Serial.println(WIFI_SSID);
+  InitWifi();
+
+  client.connect(THINGSBOARD_SERVER);
+  Serial.print("Connecting to ThingsBoard: ");
+  Serial.println(THINGSBOARD_SERVER);
+  Serial.println(THINGSBOARD_CLIENTID);
+  Serial.println(THINGSBOARD_TOKEN);
+  if ( !client.connected() ) {
+    ConnectToThingsBoard();
+  }
 }
 
-void UpdateMax (float Value) {
-  MaxValue = 0;
-  for (int i = 4; i > 0; i--) {
-    window[i] = window[i - 1];
-  }
-  window[0] = Value;
-
-  for (int a = 0; a < 5; a ++) {
-    if (window[a] > MaxValue) {
-      MaxValue = window[a];
-    }
-  }
+void loop() {
+  Sampling(SamplesDelay, Samples, SleepTime, SerialDebugMode);
+  client.loop();  
 }
