@@ -59,9 +59,15 @@ const int SerialDebugMode = 1; // 1 = Print all samples on Serial Monitor, 0 = P
 
 // --------- END OF CONFIGURABLE FIRMWARE PARAMETERS SECTION ---------
 
-// ESP8266 board libraries.
+// ESP8266/ESP32 board libraries.
+#ifdef ESP8266
 #include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>
+#elif defined(ESP32)
+#include <WiFi.h>
+#else
+#error Only ESP8266 and ESP32 type Boards supported
+#endif
+
 
 // We use ThingsBoard IoT Platform MQTT transport to report measurements in this example. 
 // Set your ThingsBoard instance credentials on the noisepm/noisepm_creds.h file
@@ -94,36 +100,15 @@ int valeur ;
 int sensor = A0;
 
 // The WiFi Client.
-WiFiClientSecure wifiClient;
+WiFiClient espClient;
 
 // The ThingsBoard MQTT Pub/Sub client
-PubSubClient client(wifiClient);
+PubSubClient client(THINGSBOARD_SERVER, 1883, espClient);
 
-void setup() {
-  Serial.begin(SerialBaud);
-
-  Serial.print("Connecting to WiFi...");
-  Serial.println(WIFI_SSID);
-  InitWifi();
-
-  client.setServer(THINGSBOARD_SERVER, 1883);
-  Serial.print("Connecting to ThingsBoard...");
-  Serial.println(THINGSBOARD_SERVER);
-  Serial.println(THINGSBOARD_CLIENTID);
-  Serial.println(THINGSBOARD_TOKEN);
-  if ( !client.connected() ) {
-    ConnectToThingsBoard();
-  }
-}
-
-void loop() {
-  Sampling(SamplesDelay, Samples, SleepTime, SerialDebugMode);
-  client.loop();  
-}
 
 void InitWifi() {
-  // WiFi.persistent(false);
-  // WiFi.mode(WIFI_OFF);
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_OFF);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 
@@ -171,8 +156,7 @@ void ConnectToThingsBoard() {
     }
 
     if (millis() - thingsBoardConnectStart > ThingsBoardConnectionMaxTime) {
-      Serial.print("Failed to connect Thingsboard: Response Code = ");
-      Serial.print(client.state());
+      Serial.print("Failed to connect Thingsboard.");
       Serial.println();
       Serial.println("Putting device to sleep before retrying.");
       Serial.println("Please check your credentials as well.");
@@ -185,6 +169,36 @@ void ConnectToThingsBoard() {
         Serial.println(".t.");
         delay(2000);
       }
+    }
+  }
+}
+
+void report(double maxi, double minim , double avg)
+{
+  // Prepare a JSON payload string
+  String payload = "{";
+  payload += "\"maxi\":"; payload += maxi; payload += ",";
+  payload += "\"minim\":"; payload += minim; payload += ",";
+  payload += "\"avg\":"; payload += avg;
+  payload += "}";
+
+  // Send payload
+  char attributes[100];
+  payload.toCharArray( attributes, 100 );
+  client.publish( "v1/devices/me/telemetry", attributes );
+  Serial.println("Reported!");
+}
+
+void UpdateMax (float Value) {
+  MaxValue = 0;
+  for (int i = 4; i > 0; i--) {
+    window[i] = window[i - 1];
+  }
+  window[0] = Value;
+
+  for (int a = 0; a < 5; a ++) {
+    if (window[a] > MaxValue) {
+      MaxValue = window[a];
     }
   }
 }
@@ -245,32 +259,26 @@ void Sampling(int Sample_D, int n_Sample, int Sleep_t, int Mode) {
   ESP.deepSleep(Sleep_t); // going to sleep
 }
 
-void report(double maxi, double minim , double avg)
-{
-  // Prepare a JSON payload string
-  String payload = "{";
-  payload += "\"maxi\":"; payload += maxi; payload += ",";
-  payload += "\"minim\":"; payload += minim; payload += ",";
-  payload += "\"avg\":"; payload += avg;
-  payload += "}";
 
-  // Send payload
-  char attributes[100];
-  payload.toCharArray( attributes, 100 );
-  client.publish( "v1/devices/me/telemetry", attributes );
-  Serial.println("Reported!");
+
+void setup() {
+  Serial.begin(SerialBaud);
+
+  Serial.print("Connecting to WiFi: ");
+  Serial.println(WIFI_SSID);
+  InitWifi();
+
+  client.connect(THINGSBOARD_SERVER);
+  Serial.print("Connecting to ThingsBoard: ");
+  Serial.println(THINGSBOARD_SERVER);
+  Serial.println(THINGSBOARD_CLIENTID);
+  Serial.println(THINGSBOARD_TOKEN);
+  if ( !client.connected() ) {
+    ConnectToThingsBoard();
+  }
 }
 
-void UpdateMax (float Value) {
-  MaxValue = 0;
-  for (int i = 4; i > 0; i--) {
-    window[i] = window[i - 1];
-  }
-  window[0] = Value;
-
-  for (int a = 0; a < 5; a ++) {
-    if (window[a] > MaxValue) {
-      MaxValue = window[a];
-    }
-  }
+void loop() {
+  Sampling(SamplesDelay, Samples, SleepTime, SerialDebugMode);
+  client.loop();  
 }
